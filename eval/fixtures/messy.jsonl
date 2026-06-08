@@ -1,0 +1,6 @@
+{"parentUuid":null,"isSidechain":false,"type":"user","uuid":"mess0001-0000-0000-0000-000000000001","timestamp":"2026-06-01T10:00:00.000Z","message":{"role":"user","content":"Start a session with some malformed data mixed in."},"sessionId":"messy-session-001","version":"2.1.126"}
+this line is not valid json at all {{{ broken
+{"parentUuid":"mess0001-0000-0000-0000-000000000001","isSidechain":false,"type":"assistant","uuid":"mess0002-0000-0000-0000-000000000002","timestamp":"2026-06-01T10:00:05.000Z","message":{"id":"msg_mess01","type":"message","role":"assistant","model":"claude-opus-4-7","content":[{"type":"text","text":"Acknowledged. I will continue despite the bad line above."}],"usage":{"input_tokens":30,"output_tokens":20}}}
+
+{"type":"some-unknown-record-type","uuid":"mess0003-0000-0000-0000-000000000003","payload":{"foo":1,"bar":[1,2,3]},"note":"records of unknown type should be skipped, not crash"}
+{"parentUuid":"mess0002-0000-0000-0000-000000000002","isSidechain":false,"type":"user","uuid":"mess0004-0000-0000-0000-000000000004","timestamp":"2026-06-01T10:00:06.000Z","message":{"role":"user","content":"Wrap it up."},"sessionId":"messy-session-001"}

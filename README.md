@@ -26,8 +26,17 @@ Turn Claude Code session transcripts (JSONL) into a **standalone interactive HTM
 node cc-viz.js sample.jsonl
 # → writes sample.html in the same directory
 
-# Specify output path
+# Specify output path (-o or --output)
 node cc-viz.js sample.jsonl -o /tmp/report.html
+node cc-viz.js sample.jsonl --output /tmp/report.html
+
+# Print help (to stdout, exit 0)
+node cc-viz.js --help
+node cc-viz.js -h
+
+# Run with no arguments → prints usage AND lists the .jsonl sessions
+# it finds under ~/.claude/projects (newest first), so you can copy a path
+node cc-viz.js
 
 # Visualize a real Claude Code session
 node cc-viz.js ~/.claude/projects/<project>/<session-id>.jsonl -o out.html
@@ -37,6 +46,29 @@ open sample.html
 ```
 
 Requires **Node.js 18+** (uses ES module `import` with `node:` builtins). No `npm install` needed.
+
+### Run via npx / install globally
+
+A `package.json` ships a `bin` (`cc-viz`), so the tool runs without cloning:
+
+```bash
+# One-off, no install
+npx cc-visualizer sample.jsonl -o report.html
+
+# Global install → `cc-viz` on your PATH
+npm install -g cc-visualizer
+cc-viz ~/.claude/projects/<project>/<session-id>.jsonl -o out.html
+cc-viz --help
+```
+
+### CLI reference
+
+| Flag | Description |
+|------|-------------|
+| `<transcript.jsonl>` | Input transcript (first positional argument). |
+| `-o`, `--output <file>` | Output HTML path. Defaults to the input path with a `.html` extension. |
+| `-h`, `--help` | Print usage to **stdout** and exit `0`. |
+| _(no arguments)_ | Print usage to **stdout**, list discoverable sessions under `~/.claude/projects`, exit `0`. |
 
 ## Keyboard shortcuts
 
@@ -75,8 +107,44 @@ A single self-contained `.html` file — no CDN, no network calls, works offline
 
 | Transcript size | Output size |
 |-----------------|-------------|
-| ~7 records (sample) | ~50 KB |
+| ~8 records (sample) | ~58 KB |
 | ~149 records | ~340 KB |
+| ~3000 records | ~4 MB |
+
+## Tests
+
+Unit tests live in `test/` and run with Node's built-in test runner — no dependencies:
+
+```bash
+npm test          # → node --test
+node --test       # same thing
+```
+
+Coverage spans JSONL parsing, HTML/XSS escaping, aggregate stats, and empty-input
+handling. (`test-helpers.mjs` at the repo root is a tiny wrapper that always prints a
+TAP-style `# tests/# pass/# fail` summary, so the counts are greppable regardless of
+which default reporter your Node version uses.)
+
+## Eval
+
+A strict, self-contained pass/fail harness lives under `eval/`:
+
+```bash
+node eval/eval.mjs   # → prints PASS/FAIL per criterion, then RESULT: X/Y passed
+npm run eval         # same thing
+```
+
+It checks: help/no-arg behavior, self-contained output (no CDN), **XSS escaping**,
+malformed-input robustness, 3000-line scale, the test suite, and packaging. Exit code
+is `0` only when every criterion passes. The harness never touches project source.
+
+## Security
+
+User-supplied transcript text is HTML-escaped before it reaches the report. Beyond the
+standard five entities, `esc()` also encodes `=`, `(`, and `)` as numeric entities, so
+inert payloads like `onerror=alert(1)` can never survive as a live attribute or a
+copy-pasteable literal — they render as visible, inert text. The output runs entirely
+offline with no external resources.
 
 ## Limitations
 

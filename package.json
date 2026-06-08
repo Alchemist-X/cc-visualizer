@@ -1,0 +1,40 @@
+{
+  "name": "cc-visualizer",
+  "version": "1.1.0",
+  "description": "Turn Claude Code session transcripts (JSONL) into a standalone interactive HTML report. Zero dependencies.",
+  "type": "module",
+  "bin": {
+    "cc-viz": "cc-viz.js"
+  },
+  "main": "cc-viz.js",
+  "exports": {
+    ".": "./cc-viz.js"
+  },
+  "files": [
+    "cc-viz.js",
+    "sample.jsonl",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "eval": "node eval/eval.mjs",
+    "start": "node cc-viz.js sample.jsonl"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "transcript",
+    "jsonl",
+    "visualizer",
+    "html",
+    "report",
+    "cli"
+  ],
+  "license": "MIT",
+  "author": "Alchemist-X",
+  "dependencies": {}
+}

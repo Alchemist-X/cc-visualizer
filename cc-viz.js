@@ -3,24 +3,126 @@
 // Usage: node cc-viz.js <transcript.jsonl> [-o out.html]
 // Zero runtime dependencies — Node stdlib only.
 
-import { readFileSync, writeFileSync } from 'node:fs';
-import { resolve, basename } from 'node:path';
+import { readFileSync, writeFileSync, existsSync, readdirSync, statSync } from 'node:fs';
+import { resolve, basename, join } from 'node:path';
+import { homedir } from 'node:os';
+import { fileURLToPath } from 'node:url';
+
+// ──────────────────────────────────────────────
+// Usage / help text
+// ──────────────────────────────────────────────
+const USAGE = `cc-visualizer — Claude Code session transcript visualizer
+
+Usage:
+  node cc-viz.js <transcript.jsonl> [-o out.html]
+  cc-viz <transcript.jsonl> [-o out.html]      (when installed via npm/npx)
+
+Arguments:
+  <transcript.jsonl>   Path to a Claude Code session transcript (one JSON record per line).
+
+Options:
+  -o, --output <file>  Output HTML path. Defaults to the input path with a .html extension.
+  -h, --help           Show this help and exit.
+
+Examples:
+  node cc-viz.js sample.jsonl
+  node cc-viz.js sample.jsonl -o /tmp/report.html
+  npx cc-visualizer ~/.claude/projects/<project>/<session>.jsonl -o out.html
+
+Transcripts live under ~/.claude/projects/<project-slug>/<session-uuid>.jsonl`;
+
+// ──────────────────────────────────────────────
+// Discover available session transcripts under ~/.claude/projects
+// Read-only listing; never throws (returns [] on any error).
+// ──────────────────────────────────────────────
+function listClaudeSessions(limit = 30) {
+  try {
+    const root = join(homedir(), '.claude', 'projects');
+    if (!existsSync(root)) return [];
+    const found = [];
+    for (const project of readdirSync(root)) {
+      const projDir = join(root, project);
+      let stat;
+      try {
+        stat = statSync(projDir);
+      } catch {
+        continue;
+      }
+      if (!stat.isDirectory()) continue;
+      let entries;
+      try {
+        entries = readdirSync(projDir);
+      } catch {
+        continue;
+      }
+      for (const f of entries) {
+        if (!f.endsWith('.jsonl')) continue;
+        const full = join(projDir, f);
+        try {
+          const s = statSync(full);
+          if (s.isFile()) found.push({ path: full, mtimeMs: s.mtimeMs });
+        } catch {
+          // ignore unreadable entries
+        }
+      }
+    }
+    return found
+      .sort((a, b) => b.mtimeMs - a.mtimeMs)
+      .slice(0, limit)
+      .map((e) => e.path);
+  } catch {
+    return [];
+  }
+}
+
+// Print usage (and, when no input is given, any discoverable sessions) to STDOUT.
+function printUsageToStdout(withSessions) {
+  console.log(USAGE);
+  if (!withSessions) return;
+  const sessions = listClaudeSessions();
+  if (sessions.length === 0) return;
+  console.log('');
+  console.log(`Available sessions under ~/.claude/projects (${sessions.length} shown, newest first):`);
+  for (const p of sessions) {
+    console.log(`  ${p}`);
+  }
+  console.log('');
+  console.log('Re-run with one of the paths above, e.g.:');
+  console.log(`  node cc-viz.js "${sessions[0]}" -o out.html`);
+}
 
 // ──────────────────────────────────────────────
 // CLI argument parsing
+// Returns { mode: 'help' | 'usage' | 'run', inputPath?, outputPath? }.
+// Help/usage are non-error exits handled by the caller (exit 0, STDOUT).
 // ──────────────────────────────────────────────
 function parseArgs(argv) {
   const args = argv.slice(2);
-  if (args.length === 0 || args[0] === '--help' || args[0] === '-h') {
-    console.error('Usage: node cc-viz.js <transcript.jsonl> [-o out.html]');
-    process.exit(args.length === 0 ? 1 : 0);
+  if (args.includes('--help') || args.includes('-h')) {
+    return { mode: 'help' };
   }
-  const inputPath = resolve(args[0]);
-  const oIdx = args.indexOf('-o');
-  const outputPath = oIdx !== -1 && args[oIdx + 1]
-    ? resolve(args[oIdx + 1])
-    : resolve(inputPath.replace(/\.jsonl$/, '') + '.html');
-  return { inputPath, outputPath };
+  // First non-flag argument is the input path.
+  const positional = [];
+  let outputPath = null;
+  for (let i = 0; i < args.length; i += 1) {
+    const a = args[i];
+    if (a === '-o' || a === '--output') {
+      const next = args[i + 1];
+      if (next) {
+        outputPath = resolve(next);
+        i += 1;
+      }
+    } else {
+      positional.push(a);
+    }
+  }
+  if (positional.length === 0) {
+    return { mode: 'usage' };
+  }
+  const inputPath = resolve(positional[0]);
+  const resolvedOutput = outputPath
+    ?? resolve(inputPath.replace(/\.jsonl$/, '') + '.html');
+  return { mode: 'run', inputPath, outputPath: resolvedOutput };
 }
 
 // ──────────────────────────────────────────────
@@ -162,13 +264,21 @@ function buildStats(records) {
 // ──────────────────────────────────────────────
 // HTML escaping
 // ──────────────────────────────────────────────
+// Escape every character that can break out of HTML text/attribute context.
+// Beyond the standard five, we also encode `=`, `(`, and `)` as numeric
+// entities. These render identically in the browser but ensure inert payloads
+// like `onerror=alert(1)` never survive as a literal, copy-pasteable substring
+// in the output — defense in depth against event-handler / call injection.
 function esc(str) {
   return safeStr(str)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+    .replace(/'/g, '&#39;')
+    .replace(/=/g, '&#61;')
+    .replace(/\(/g, '&#40;')
+    .replace(/\)/g, '&#41;');
 }
 
 function escAttr(str) {
@@ -199,8 +309,11 @@ function syntaxHighlightJson(obj) {
   }
   // Escape HTML first, then wrap tokens
   const escaped = esc(json);
+  // String-value char class must tolerate every numeric/named entity esc() emits
+  // (&amp; &lt; &gt; &#39; &#61; &#40; &#41;) so highlighting survives values
+  // containing =, (, ) etc. without breaking on the leading `&`.
   return escaped.replace(
-    /(&quot;)((?:[^&]|&amp;|&lt;|&gt;|&#39;)*?)(&quot;)(\s*:)?|(\btrue\b|\bfalse\b|\bnull\b)|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g,
+    /(&quot;)((?:[^&]|&amp;|&lt;|&gt;|&#39;|&#61;|&#40;|&#41;)*?)(&quot;)(\s*:)?|(\btrue\b|\bfalse\b|\bnull\b)|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g,
     (match, oq, val, cq, colon, kw, num) => {
       if (kw) return `<span class="j-kw">${kw}</span>`;
       if (num) return `<span class="j-num">${num}</span>`;
@@ -1012,12 +1125,25 @@ code, pre, .monospace { font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', ui
 
 /* ── Stats header ───────────────────────────── */
 .stats-header {
-  background: var(--bg-surface);
+  position: relative;
+  background:
+    radial-gradient(120% 140% at 0% 0%, var(--user-bg), transparent 55%),
+    radial-gradient(120% 140% at 100% 0%, var(--asst-bg), transparent 55%),
+    var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 20px 22px;
   margin-bottom: 16px;
   box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+.stats-header::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--user), var(--think), var(--asst));
+  opacity: .9;
 }
 .stats-title-row {
   display: flex;
@@ -1026,9 +1152,13 @@ code, pre, .monospace { font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', ui
   margin-bottom: 2px;
 }
 .stats-title-row h1 {
-  font-size: 1.2rem;
-  font-weight: 700;
-  letter-spacing: -.02em;
+  font-size: 1.25rem;
+  font-weight: 800;
+  letter-spacing: -.025em;
+  background: linear-gradient(90deg, var(--text), var(--text-muted));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
   color: var(--text);
 }
 .stats-duration {
@@ -1136,9 +1266,9 @@ code, pre, .monospace { font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', ui
   margin-bottom: 10px;
   overflow: hidden;
   box-shadow: var(--shadow-sm);
-  transition: box-shadow .15s;
+  transition: box-shadow .15s ease, transform .15s ease;
 }
-.card:hover { box-shadow: var(--shadow); }
+.card:hover { box-shadow: var(--shadow); transform: translateY(-1px); }
 .card[hidden] { display: none !important; }
 .card.search-hidden { display: none !important; }
 
@@ -1788,7 +1918,18 @@ ${JS}
 // Main
 // ──────────────────────────────────────────────
 function main() {
-  const { inputPath, outputPath } = parseArgs(process.argv);
+  const parsed = parseArgs(process.argv);
+
+  if (parsed.mode === 'help') {
+    printUsageToStdout(false);
+    process.exit(0);
+  }
+  if (parsed.mode === 'usage') {
+    printUsageToStdout(true);
+    process.exit(0);
+  }
+
+  const { inputPath, outputPath } = parsed;
 
   let raw;
   try {
@@ -1839,4 +1980,31 @@ function main() {
   console.log(`  Features: sidebar=${turns.length} items | themes=dark+light | search=next/prev | JSON-hl=yes`);
 }
 
-main();
+// ──────────────────────────────────────────────
+// Exports for testing (pure, side-effect-free functions).
+// ──────────────────────────────────────────────
+export {
+  parseArgs,
+  parseJsonl,
+  esc,
+  escAttr,
+  buildStats,
+  buildTurns,
+  syntaxHighlightJson,
+  listClaudeSessions,
+  USAGE,
+};
+
+// Only run the CLI when this file is executed directly (not when imported by
+// tests). `process.argv[1]` is the invoked script path.
+const invokedDirectly = (() => {
+  try {
+    return process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+  } catch {
+    return false;
+  }
+})();
+
+if (invokedDirectly) {
+  main();
+}
