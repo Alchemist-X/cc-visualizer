@@ -1,4 +1,9 @@
 node_modules/
 .DS_Store
 out/
+cache/
+broadcast/
 *.real.jsonl
+.env
+.env.*
+
